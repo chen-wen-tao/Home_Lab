@@ -9,3 +9,14 @@ override.tf.json
 *_override.tf.json
 # Keep the lock file in git:
 !*.terraform.lock.hcl
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# Keep the lock file in git:
+!*.terraform.lock.hcl
