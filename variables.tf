@@ -1,11 +1,11 @@
 variable "location" {
   type    = string
-  default = "westus"
+  default = "eastus"
 }
 
 variable "rg_name" {
   type    = string
-  default = "lab-rg"
+  default = "lab-vpn-rg"
 }
 
 variable "prefix" {
