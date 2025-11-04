@@ -2,12 +2,12 @@
 
 output "resource_group_name" {
   description = "Name of the resource group"
-  value       = azurerm_resource_group.lab.name
+  value       = local.resource_group_name
 }
 
 output "location" {
   description = "Location of the resources"
-  value       = azurerm_resource_group.lab.location
+  value       = local.resource_group_location
 }
 
 output "jumpbox_public_ip" {

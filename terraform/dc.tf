@@ -3,8 +3,8 @@
 # Network interface for DC
 resource "azurerm_network_interface" "dc" {
   name                = "${var.prefix}-dc-nic"
-  location            = azurerm_resource_group.lab.location
-  resource_group_name = azurerm_resource_group.lab.name
+  location            = local.resource_group_location
+  resource_group_name = local.resource_group_name
 
   ip_configuration {
     name                          = "internal"
@@ -22,8 +22,8 @@ resource "azurerm_network_interface" "dc" {
 # DC VM
 resource "azurerm_windows_virtual_machine" "dc" {
   name                = "${var.prefix}-dc"
-  resource_group_name = azurerm_resource_group.lab.name
-  location            = azurerm_resource_group.lab.location
+  resource_group_name = local.resource_group_name
+  location            = local.resource_group_location
   size                = var.vm_size
   admin_username      = var.admin_username
   admin_password      = var.admin_password

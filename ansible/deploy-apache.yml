@@ -1,0 +1,211 @@
+---
+# Apache Web Server Deployment Playbook
+# This playbook installs and configures Apache HTTP Server on Linux
+
+- name: Deploy Apache Web Server
+  hosts: linux
+  become: yes
+  gather_facts: yes
+  vars:
+    apache_port: 80
+    apache_ssl_port: 443
+    apache_document_root: "/var/www/html"
+    apache_server_admin: "admin@example.com"
+    apache_server_name: "{{ ansible_hostname }}"
+    apache_modules:
+      - rewrite
+      - ssl
+      - headers
+      - deflate
+      - expires
+
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install Apache and required packages
+      ansible.builtin.apt:
+        name:
+          - apache2
+          - openssl
+          - python3-pip
+        state: present
+
+    - name: Enable required Apache modules
+      ansible.builtin.command:
+        cmd: "a2enmod {{ item }}"
+      loop: "{{ apache_modules }}"
+      register: module_enable
+      changed_when: "'already enabled' not in module_enable.stdout"
+      failed_when: false
+
+    - name: Test Apache configuration before applying changes
+      ansible.builtin.command:
+        cmd: "apache2ctl configtest"
+      register: apache_config_test
+      changed_when: false
+      failed_when: false
+
+    - name: Create Apache document root directory
+      ansible.builtin.file:
+        path: "{{ apache_document_root }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+
+    - name: Create default index.html
+      ansible.builtin.copy:
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Apache Web Server - {{ ansible_hostname }}</title>
+              <meta charset="utf-8">
+              <style>
+                  body {
+                      font-family: Arial, sans-serif;
+                      text-align: center;
+                      margin-top: 100px;
+                      background-color: #f4f4f4;
+                  }
+                  .container {
+                      background-color: white;
+                      padding: 30px;
+                      border-radius: 10px;
+                      display: inline-block;
+                      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                  }
+                  h1 { color: #d9534f; }
+                  .info { color: #666; margin-top: 20px; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <h1>🐧 Apache Web Server</h1>
+                  <p>Welcome to Apache on {{ ansible_hostname }}</p>
+                  <div class="info">
+                      <p><strong>Server:</strong> {{ ansible_hostname }}</p>
+                      <p><strong>Port:</strong> {{ apache_port }}</p>
+                      <p><strong>Status:</strong> Running</p>
+                      <p><strong>Deployed by:</strong> Ansible</p>
+                  </div>
+              </div>
+          </body>
+          </html>
+        dest: "{{ apache_document_root }}/index.html"
+        owner: www-data
+        group: www-data
+        mode: '0644'
+
+    - name: Configure Apache virtual host
+      ansible.builtin.template:
+        src: apache_vhost.conf.j2
+        dest: "/etc/apache2/sites-available/000-default.conf"
+        owner: root
+        group: root
+        mode: '0644'
+      notify: restart apache
+
+    - name: Configure Apache ports
+      ansible.builtin.replace:
+        path: /etc/apache2/ports.conf
+        regexp: "^{{ item.regexp }}"
+        replace: "{{ item.line }}"
+      loop:
+        - { regexp: '^Listen 80', line: 'Listen {{ apache_port }}' }
+        - { regexp: '^    Listen 443', line: '    Listen {{ apache_ssl_port }}' }
+      notify: restart apache
+
+    - name: Enable default site
+      ansible.builtin.command:
+        cmd: "a2ensite 000-default.conf"
+        creates: "/etc/apache2/sites-enabled/000-default.conf"
+      notify: restart apache
+
+    - name: Configure Apache security headers
+      ansible.builtin.template:
+        src: apache_security.conf.j2
+        dest: "/etc/apache2/conf-available/security-headers.conf"
+        owner: root
+        group: root
+        mode: '0644'
+      notify: restart apache
+
+    - name: Enable security headers configuration
+      ansible.builtin.command:
+        cmd: "a2enconf security-headers"
+        creates: "/etc/apache2/conf-enabled/security-headers.conf"
+      notify: restart apache
+
+    - name: Test Apache configuration before starting
+      ansible.builtin.command:
+        cmd: "apache2ctl configtest"
+      register: final_config_test
+      changed_when: false
+      failed_when: final_config_test.rc != 0
+
+    - name: Display config test output if there were warnings
+      ansible.builtin.debug:
+        var: final_config_test.stdout_lines
+      when: final_config_test.rc == 0 and final_config_test.stdout_lines | length > 0
+
+    - name: Start and enable Apache service
+      ansible.builtin.systemd:
+        name: apache2
+        state: started
+        enabled: yes
+
+    - name: Configure firewall for Apache (if ufw is available)
+      ansible.builtin.ufw:
+        rule: allow
+        port: "{{ apache_port }}"
+        proto: tcp
+      ignore_errors: yes
+
+    - name: Verify Apache is running
+      ansible.builtin.uri:
+        url: "http://localhost:{{ apache_port }}"
+        status_code: 200
+      register: apache_check
+      retries: 5
+      delay: 5
+      until: apache_check.status == 200
+
+    - name: Display Apache status
+      ansible.builtin.debug:
+        msg:
+          - "Apache has been successfully deployed!"
+          - "Server: {{ apache_server_name }}"
+          - "Port: {{ apache_port }}"
+          - "Document Root: {{ apache_document_root }}"
+          - "Status: {{ apache_check.status }}"
+
+  handlers:
+    - name: restart apache
+      block:
+        - name: Test Apache configuration before restart
+          ansible.builtin.command:
+            cmd: "apache2ctl configtest"
+          register: handler_config_test
+          changed_when: false
+          failed_when: false
+
+        - name: Display configuration errors
+          ansible.builtin.debug:
+            msg: "Apache configuration test failed. Errors: {{ handler_config_test.stderr_lines | default(handler_config_test.stdout_lines) }}"
+          when: handler_config_test.rc != 0
+
+        - name: Restart Apache if config is valid
+          ansible.builtin.systemd:
+            name: apache2
+            state: restarted
+          when: handler_config_test.rc == 0
+
+        - name: Fail if config test failed
+          ansible.builtin.fail:
+            msg: "Cannot restart Apache: configuration test failed. Run 'apache2ctl configtest' manually to see errors."
+          when: handler_config_test.rc != 0
+

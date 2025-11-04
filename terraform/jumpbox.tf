@@ -3,8 +3,8 @@
 # Public IP for jumpbox
 resource "azurerm_public_ip" "jumpbox" {
   name                = "${var.prefix}-jumpbox-pip"
-  resource_group_name = azurerm_resource_group.lab.name
-  location            = azurerm_resource_group.lab.location
+  resource_group_name = local.resource_group_name
+  location            = local.resource_group_location
   allocation_method   = "Static"
   sku                 = "Standard"
 
@@ -17,8 +17,8 @@ resource "azurerm_public_ip" "jumpbox" {
 # Network interface for jumpbox
 resource "azurerm_network_interface" "jumpbox" {
   name                = "${var.prefix}-jumpbox-nic"
-  location            = azurerm_resource_group.lab.location
-  resource_group_name = azurerm_resource_group.lab.name
+  location            = local.resource_group_location
+  resource_group_name = local.resource_group_name
 
   ip_configuration {
     name                          = "internal"
@@ -36,8 +36,8 @@ resource "azurerm_network_interface" "jumpbox" {
 # Jumpbox VM
 resource "azurerm_windows_virtual_machine" "jumpbox" {
   name                = "${var.prefix}-jumpbox"
-  resource_group_name = azurerm_resource_group.lab.name
-  location            = azurerm_resource_group.lab.location
+  resource_group_name = local.resource_group_name
+  location            = local.resource_group_location
   size                = var.vm_size
   admin_username      = var.admin_username
   admin_password      = var.admin_password

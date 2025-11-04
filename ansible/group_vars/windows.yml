@@ -1,0 +1,26 @@
+---
+# Windows hosts group variables
+
+# Windows connection settings
+ansible_connection: winrm
+ansible_winrm_transport: ntlm
+ansible_winrm_server_cert_validation: ignore
+ansible_port: 5985
+
+# Windows doesn't use sudo, disable become
+ansible_become: False
+
+# MSSQL Configuration
+mssql_instance_name: "MSSQLSERVER"
+mssql_port: 1433
+mssql_features: "SQLENGINE,REPLICATION,SNAC_SDK"
+mssql_setup_iso_path: "C:\\SQLServer"
+mssql_instance_dir: "C:\\Program Files\\Microsoft SQL Server"
+mssql_data_dir: "D:\\MSSQL\\Data"
+mssql_log_dir: "D:\\MSSQL\\Log"
+mssql_backup_dir: "D:\\MSSQL\\Backup"
+mssql_temp_db_dir: "D:\\MSSQL\\TempDB"
+
+# Note: Passwords should be stored in vault files
+# mssql_sa_password should be set in host_vars or via --extra-vars
+

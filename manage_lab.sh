@@ -2,8 +2,17 @@
 # Lab Management Script
 # Start, stop, or check status of your lab VMs
 
-RG_NAME="lab-complete-rg"
-VMS=("dc" "client" "linux-client" "jumpbox")
+# Try to detect resource group name from Terraform or use default
+RG_NAME="${RESOURCE_GROUP_NAME:-lab-complete-rg}"
+VMS=("lab-dc" "lab-client" "lab-linux" "lab-jumpbox")
+
+# Check if we're using a different resource group (from Terraform state)
+if [ -f "terraform/terraform.tfstate" ]; then
+  DETECTED_RG=$(cd terraform && terraform show -json 2>/dev/null | grep -o '"resource_group_name":"[^"]*"' | head -1 | cut -d'"' -f4)
+  if [ -n "$DETECTED_RG" ]; then
+    RG_NAME="$DETECTED_RG"
+  fi
+fi
 
 case "$1" in
   "start")
@@ -29,11 +38,54 @@ case "$1" in
   "status")
     echo "📊 Lab VM Status:"
     echo ""
-    az vm list --resource-group $RG_NAME --query "[].{Name:name, Status:powerState, PublicIP:publicIps, PrivateIP:privateIps}" --output table
+    
+    # Check if resource group exists
+    if ! az group show --name $RG_NAME &>/dev/null; then
+      echo "⚠️  Resource group '$RG_NAME' does not exist."
+      echo "💡 VMs may not be deployed yet. Run: ./terraform_manage.sh apply <password>"
+      exit 0
+    fi
+    
+    # Use alternative method to avoid Azure CLI 'disks' attribute error
+    # Check VMs individually instead of using az vm list
+    printf "%-15s %-20s %-15s %-15s\n" "Name" "Status" "Public IP" "Private IP"
+    echo "------------------------------------------------------------------------"
+    
+    for vm in "${VMS[@]}"; do
+      # Get VM power state using resource API (avoids disks attribute error)
+      POWER_STATE=$(az vm show --resource-group $RG_NAME --name $vm --show-details --query "powerState" -o tsv 2>/dev/null || echo "Unknown")
+      
+      # Get IPs using network interface (more reliable)
+      NIC_ID=$(az vm show --resource-group $RG_NAME --name $vm --query "networkProfile.networkInterfaces[0].id" -o tsv 2>/dev/null)
+      if [ -n "$NIC_ID" ]; then
+        PRIVATE_IP=$(az network nic show --ids "$NIC_ID" --query "ipConfigurations[0].privateIpAddress" -o tsv 2>/dev/null || echo "N/A")
+        PIP_ID=$(az network nic show --ids "$NIC_ID" --query "ipConfigurations[0].publicIpAddress.id" -o tsv 2>/dev/null)
+        if [ -n "$PIP_ID" ] && [ "$PIP_ID" != "null" ]; then
+          PUBLIC_IP=$(az network public-ip show --ids "$PIP_ID" --query "ipAddress" -o tsv 2>/dev/null || echo "N/A")
+        else
+          PUBLIC_IP="N/A"
+        fi
+      else
+        PRIVATE_IP="N/A"
+        PUBLIC_IP="N/A"
+      fi
+      
+      # Format status nicely
+      if echo "$POWER_STATE" | grep -q "running"; then
+        STATUS="🟢 Running"
+      elif echo "$POWER_STATE" | grep -q "deallocated"; then
+        STATUS="🔴 Stopped"
+      else
+        STATUS="$POWER_STATE"
+      fi
+      
+      printf "%-15s %-20s %-15s %-15s\n" "$vm" "$STATUS" "$PUBLIC_IP" "$PRIVATE_IP"
+    done
+    
     echo ""
     echo "💡 Status meanings:"
-    echo "  - 'VM running' = You're being charged compute costs"
-    echo "  - 'VM deallocated' = No compute charges (saving money!)"
+    echo "  - 🟢 Running = You're being charged compute costs"
+    echo "  - 🔴 Stopped = No compute charges (saving money!)"
     ;;
     
   "cost")

@@ -41,3 +41,9 @@ variable "auto_shutdown_time" {
   type        = string
   default     = "18:00"
 }
+
+variable "use_existing_resource_group" {
+  description = "Set to true to use an existing resource group instead of creating a new one"
+  type        = bool
+  default     = false
+}

@@ -1,0 +1,34 @@
+---
+# Master Playbook - Deploy All Services
+# This playbook orchestrates the deployment of MSSQL, Apache, and Nginx
+
+- name: Deploy MSSQL Server on Windows
+  import_playbook: deploy-mssql.yml
+
+- name: Deploy Apache Web Server on Linux
+  import_playbook: deploy-apache.yml
+
+- name: Deploy Nginx Web Server on Linux
+  import_playbook: deploy-nginx.yml
+
+- name: Display deployment summary
+  hosts: all
+  gather_facts: no
+  tasks:
+    - name: Deployment Summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "  Deployment Summary"
+          - "=========================================="
+          - ""
+          - "Windows Hosts:"
+          - "  - MSSQL Server: Port {{ hostvars[groups['windows'][0]]['mssql_port'] | default(1433) }}"
+          - ""
+          - "Linux Hosts:"
+          - "  - Apache Web Server: Port {{ hostvars[groups['linux'][0]]['apache_port'] | default(80) }}"
+          - "  - Nginx Web Server: Port {{ hostvars[groups['linux'][0]]['nginx_port'] | default(8080) }}"
+          - ""
+          - "All services have been deployed successfully!"
+          - "=========================================="
+

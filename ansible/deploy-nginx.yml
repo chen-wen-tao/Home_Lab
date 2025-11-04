@@ -1,0 +1,176 @@
+---
+# Nginx Web Server Deployment Playbook
+# This playbook installs and configures Nginx on Linux
+
+- name: Deploy Nginx Web Server
+  hosts: linux
+  become: yes
+  gather_facts: yes
+  vars:
+    nginx_port: 8080
+    nginx_ssl_port: 8443
+    nginx_document_root: "/var/www/nginx"
+    nginx_server_admin: "admin@example.com"
+    nginx_server_name: "{{ ansible_hostname }}"
+    nginx_worker_processes: "auto"
+    nginx_worker_connections: 1024
+
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install Nginx and required packages
+      ansible.builtin.apt:
+        name:
+          - nginx
+          - openssl
+          - python3-pip
+        state: present
+
+    - name: Create Nginx document root directory
+      ansible.builtin.file:
+        path: "{{ nginx_document_root }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+
+    - name: Create default index.html for Nginx
+      ansible.builtin.copy:
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Nginx Web Server - {{ ansible_hostname }}</title>
+              <meta charset="utf-8">
+              <style>
+                  body {
+                      font-family: Arial, sans-serif;
+                      text-align: center;
+                      margin-top: 100px;
+                      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                      color: white;
+                  }
+                  .container {
+                      background-color: rgba(255,255,255,0.1);
+                      padding: 40px;
+                      border-radius: 15px;
+                      display: inline-block;
+                      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+                      backdrop-filter: blur(10px);
+                  }
+                  h1 { color: #fff; margin-bottom: 20px; }
+                  .info { margin-top: 30px; }
+                  .info p { margin: 10px 0; font-size: 16px; }
+                  .badge {
+                      display: inline-block;
+                      background: rgba(255,255,255,0.2);
+                      padding: 5px 15px;
+                      border-radius: 20px;
+                      margin: 5px;
+                  }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <h1>🚀 Nginx Web Server</h1>
+                  <p style="font-size: 18px;">Welcome to Nginx on {{ ansible_hostname }}</p>
+                  <div class="info">
+                      <span class="badge"><strong>Server:</strong> {{ ansible_hostname }}</span>
+                      <span class="badge"><strong>Port:</strong> {{ nginx_port }}</span>
+                      <span class="badge"><strong>Status:</strong> Running</span>
+                      <span class="badge"><strong>Deployed by:</strong> Ansible</span>
+                  </div>
+                  <div style="margin-top: 30px; font-size: 14px; opacity: 0.8;">
+                      <p>Nginx is a high-performance web server and reverse proxy</p>
+                  </div>
+              </div>
+          </body>
+          </html>
+        dest: "{{ nginx_document_root }}/index.html"
+        owner: www-data
+        group: www-data
+        mode: '0644'
+
+    - name: Configure Nginx main configuration
+      ansible.builtin.template:
+        src: nginx_main.conf.j2
+        dest: "/etc/nginx/nginx.conf"
+        owner: root
+        group: root
+        mode: '0644'
+        backup: yes
+      notify: restart nginx
+
+    - name: Configure Nginx default site
+      ansible.builtin.template:
+        src: nginx_site.conf.j2
+        dest: "/etc/nginx/sites-available/default"
+        owner: root
+        group: root
+        mode: '0644'
+      notify: restart nginx
+
+    - name: Create Nginx configuration directory for additional configs
+      ansible.builtin.file:
+        path: "/etc/nginx/conf.d"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Configure Nginx security headers
+      ansible.builtin.template:
+        src: nginx_security.conf.j2
+        dest: "/etc/nginx/conf.d/security.conf"
+        owner: root
+        group: root
+        mode: '0644'
+      notify: restart nginx
+
+    - name: Test Nginx configuration
+      ansible.builtin.command:
+        cmd: nginx -t
+      register: nginx_test
+      changed_when: false
+      failed_when: nginx_test.rc != 0
+
+    - name: Start and enable Nginx service
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+        enabled: yes
+
+    - name: Configure firewall for Nginx (if ufw is available)
+      ansible.builtin.ufw:
+        rule: allow
+        port: "{{ nginx_port }}"
+        proto: tcp
+      ignore_errors: yes
+
+    - name: Verify Nginx is running
+      ansible.builtin.uri:
+        url: "http://localhost:{{ nginx_port }}"
+        status_code: 200
+      register: nginx_check
+      retries: 5
+      delay: 5
+      until: nginx_check.status == 200
+
+    - name: Display Nginx status
+      ansible.builtin.debug:
+        msg:
+          - "Nginx has been successfully deployed!"
+          - "Server: {{ nginx_server_name }}"
+          - "Port: {{ nginx_port }}"
+          - "Document Root: {{ nginx_document_root }}"
+          - "Status: {{ nginx_check.status }}"
+
+  handlers:
+    - name: restart nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: restarted
+

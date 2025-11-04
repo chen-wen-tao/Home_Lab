@@ -13,8 +13,15 @@ provider "azurerm" {
   features {}
 }
 
-# Resource Group
+# Use existing resource group (data source) or create new one
+# This allows using existing RGs when subscription is read-only
+data "azurerm_resource_group" "lab" {
+  count = var.use_existing_resource_group ? 1 : 0
+  name  = var.resource_group_name
+}
+
 resource "azurerm_resource_group" "lab" {
+  count    = var.use_existing_resource_group ? 0 : 1
   name     = var.resource_group_name
   location = var.location
 
@@ -24,12 +31,18 @@ resource "azurerm_resource_group" "lab" {
   }
 }
 
+# Local value to use the correct resource group reference
+locals {
+  resource_group_name = var.use_existing_resource_group ? data.azurerm_resource_group.lab[0].name : azurerm_resource_group.lab[0].name
+  resource_group_location = var.use_existing_resource_group ? data.azurerm_resource_group.lab[0].location : azurerm_resource_group.lab[0].location
+}
+
 # Virtual Network
 resource "azurerm_virtual_network" "lab" {
   name                = "${var.prefix}-vnet"
   address_space       = ["10.10.0.0/16"]
-  location            = azurerm_resource_group.lab.location
-  resource_group_name = azurerm_resource_group.lab.name
+  location            = local.resource_group_location
+  resource_group_name = local.resource_group_name
 
   tags = {
     Environment = "Lab"
@@ -39,7 +52,7 @@ resource "azurerm_virtual_network" "lab" {
 # Subnet
 resource "azurerm_subnet" "private" {
   name                 = "private"
-  resource_group_name  = azurerm_resource_group.lab.name
+  resource_group_name  = local.resource_group_name
   virtual_network_name = azurerm_virtual_network.lab.name
   address_prefixes     = ["10.10.2.0/24"]
 }
@@ -47,8 +60,8 @@ resource "azurerm_subnet" "private" {
 # Network Security Group
 resource "azurerm_network_security_group" "lab" {
   name                = "${var.prefix}-nsg"
-  location            = azurerm_resource_group.lab.location
-  resource_group_name = azurerm_resource_group.lab.name
+  location            = local.resource_group_location
+  resource_group_name = local.resource_group_name
 
   # Allow RDP from jumpbox subnet
   security_rule {

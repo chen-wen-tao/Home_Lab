@@ -1,0 +1,29 @@
+---
+# Linux hosts group variables
+
+# Linux connection settings
+ansible_connection: ssh
+ansible_python_interpreter: /usr/bin/python3
+ansible_become: yes
+ansible_become_method: sudo
+
+# Apache Configuration
+apache_port: 80
+apache_ssl_port: 443
+apache_document_root: "/var/www/html"
+apache_server_admin: "admin@example.com"
+apache_modules:
+  - rewrite
+  - ssl
+  - headers
+  - deflate
+  - expires
+
+# Nginx Configuration
+nginx_port: 8080
+nginx_ssl_port: 8443
+nginx_document_root: "/var/www/nginx"
+nginx_server_admin: "admin@example.com"
+nginx_worker_processes: "auto"
+nginx_worker_connections: 1024
+

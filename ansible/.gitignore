@@ -1,0 +1,23 @@
+# Ansible Vault files
+*.vault
+vault.yml
+vault_*.yml
+
+# Ansible retry files
+*.retry
+
+# Ansible log files
+*.log
+
+# Temporary files
+*.tmp
+*.swp
+*~
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+

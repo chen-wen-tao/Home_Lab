@@ -3,8 +3,8 @@
 # Network interface for linux client
 resource "azurerm_network_interface" "linux" {
   name                = "${var.prefix}-linux-nic"
-  location            = azurerm_resource_group.lab.location
-  resource_group_name = azurerm_resource_group.lab.name
+  location            = local.resource_group_location
+  resource_group_name = local.resource_group_name
 
   ip_configuration {
     name                          = "internal"
@@ -21,8 +21,8 @@ resource "azurerm_network_interface" "linux" {
 # Linux Client VM
 resource "azurerm_linux_virtual_machine" "linux" {
   name                = "${var.prefix}-linux"
-  resource_group_name = azurerm_resource_group.lab.name
-  location            = azurerm_resource_group.lab.location
+  resource_group_name = local.resource_group_name
+  location            = local.resource_group_location
   size                = var.vm_size
   admin_username      = var.admin_username
   admin_password      = var.admin_password

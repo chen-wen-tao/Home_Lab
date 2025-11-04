@@ -1,0 +1,384 @@
+---
+# MSSQL Server Deployment Playbook
+# This playbook installs and configures Microsoft SQL Server on Windows
+
+- name: Deploy MSSQL Server
+  hosts: windows
+  gather_facts: yes
+  vars:
+    mssql_setup_iso_path: "C:\\SQLServer"
+    mssql_setup_exe: "setup.exe"
+    mssql_features: "SQLENGINE,REPLICATION,SNAC_SDK"
+    mssql_install_media_dir: "C:\\SQLServer"
+    mssql_instance_dir: "C:\\Program Files\\Microsoft SQL Server"
+    mssql_data_dir: "D:\\MSSQL\\Data"
+    mssql_log_dir: "D:\\MSSQL\\Log"
+    mssql_backup_dir: "D:\\MSSQL\\Backup"
+    mssql_temp_db_dir: "D:\\MSSQL\\TempDB"
+
+  tasks:
+    - name: Check if MSSQL is already installed
+      ansible.windows.win_shell: |
+        Get-Service -Name "*SQL*" -ErrorAction SilentlyContinue | Select-Object -First 1
+      register: mssql_service_check
+      changed_when: false
+      failed_when: false
+
+    - name: Display MSSQL installation status
+      ansible.builtin.debug:
+        msg: "MSSQL Server is already installed"
+      when: mssql_service_check.stdout != ""
+
+    - name: Create MSSQL installation directories
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - "{{ mssql_setup_iso_path }}"
+        - "{{ mssql_data_dir }}"
+        - "{{ mssql_log_dir }}"
+        - "{{ mssql_backup_dir }}"
+        - "{{ mssql_temp_db_dir }}"
+      when: mssql_service_check.stdout == ""
+
+    - name: Check if SQL Server installer already exists
+      ansible.windows.win_stat:
+        path: "C:\\SQLServer\\SQLEXPR_x64_ENU.exe"
+      register: installer_file
+      when: mssql_service_check.stdout == ""
+
+    - name: Display current installer file status
+      ansible.builtin.debug:
+        msg: "Installer file exists: {{ installer_file.stat.exists | default(false) }}, Size: {{ installer_file.stat.size | default(0) }} bytes"
+      when: mssql_service_check.stdout == ""
+
+    - name: Remove corrupted installer file if it exists and is too small
+      ansible.windows.win_file:
+        path: "C:\\SQLServer\\SQLEXPR_x64_ENU.exe"
+        state: absent
+      when: 
+        - mssql_service_check.stdout == ""
+        - installer_file.stat.exists | default(false)
+        - installer_file.stat.size | default(0) < 104857600
+      register: remove_corrupted_file
+
+    - name: Download SQL Server 2022 Express using PowerShell (handles redirects better)
+      ansible.windows.win_shell: |
+        $url = "https://go.microsoft.com/fwlink/p/?linkid=2216018"
+        $dest = "C:\\SQLServer\\SQLEXPR_x64_ENU.exe"
+        
+        # Remove existing file if it exists and is too small
+        if (Test-Path $dest) {
+            $fileInfo = Get-Item $dest
+            if ($fileInfo.Length -lt 104857600) {
+                Write-Output "Removing corrupted file (size: $($fileInfo.Length) bytes)..."
+                Remove-Item $dest -Force
+            } else {
+                Write-Output "File already exists and is valid (size: $($fileInfo.Length) bytes). Skipping download."
+                exit 0
+            }
+        }
+        
+        Write-Output "Downloading SQL Server Express from: $url"
+        Write-Output "This may take several minutes (file is ~200MB)..."
+        
+        # Use Invoke-WebRequest with proper headers to handle Microsoft redirects
+        try {
+            $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -UserAgent "Mozilla/5.0 (Windows NT; Windows NT 10.0; en-US) WindowsPowerShell/5.1" -MaximumRedirection 10
+            
+            # Verify download
+            $downloadedFile = Get-Item $dest
+            Write-Output "Download completed. File size: $($downloadedFile.Length) bytes"
+            
+            if ($downloadedFile.Length -lt 104857600) {
+                Write-Error "Downloaded file is too small ($($downloadedFile.Length) bytes). The URL may have redirected to an HTML page instead of the installer."
+                Remove-Item $dest -Force
+                exit 1
+            }
+            
+            Write-Output "Download successful!"
+        } catch {
+            Write-Error "Download failed: $($_.Exception.Message)"
+            if (Test-Path $dest) {
+                Remove-Item $dest -Force -ErrorAction SilentlyContinue
+            }
+            exit 1
+        }
+      when: mssql_service_check.stdout == ""
+      register: download_result
+      async: 1800
+      poll: 10
+
+    - name: Verify downloaded file size
+      ansible.windows.win_stat:
+        path: "C:\\SQLServer\\SQLEXPR_x64_ENU.exe"
+      register: file_check
+      when: mssql_service_check.stdout == ""
+      failed_when: false
+
+    - name: Display file verification results
+      ansible.builtin.debug:
+        msg: "File check: Size = {{ file_check.stat.size | default(0) }} bytes ({{ (file_check.stat.size | default(0) / 1048576) | round(2) }} MB). Minimum required: 100 MB"
+      when: mssql_service_check.stdout == ""
+
+    - name: Remove file if it's too small (corrupted download)
+      ansible.windows.win_file:
+        path: "C:\\SQLServer\\SQLEXPR_x64_ENU.exe"
+        state: absent
+      when: 
+        - mssql_service_check.stdout == ""
+        - file_check.stat.exists | default(false)
+        - file_check.stat.size | default(0) < 104857600
+      register: removed_small_file
+
+    - name: Re-download if file was removed due to small size (using PowerShell)
+      ansible.windows.win_shell: |
+        $url = "https://go.microsoft.com/fwlink/p/?linkid=2216018"
+        $dest = "C:\\SQLServer\\SQLEXPR_x64_ENU.exe"
+        
+        Write-Output "Re-downloading SQL Server Express (file was corrupted)..."
+        $ProgressPreference = 'SilentlyContinue'
+        
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -UserAgent "Mozilla/5.0 (Windows NT; Windows NT 10.0; en-US) WindowsPowerShell/5.1" -MaximumRedirection 10
+            
+            $downloadedFile = Get-Item $dest
+            Write-Output "Re-download completed. File size: $($downloadedFile.Length) bytes"
+            
+            if ($downloadedFile.Length -lt 104857600) {
+                Write-Error "Re-downloaded file is still too small ($($downloadedFile.Length) bytes). Manual download required."
+                exit 1
+            }
+        } catch {
+            Write-Error "Re-download failed: $($_.Exception.Message)"
+            exit 1
+        }
+      when: 
+        - mssql_service_check.stdout == ""
+        - removed_small_file.changed | default(false)
+      async: 1800
+      poll: 10
+
+    - name: Final file size verification
+      ansible.windows.win_stat:
+        path: "C:\\SQLServer\\SQLEXPR_x64_ENU.exe"
+      register: final_file_check
+      when: mssql_service_check.stdout == ""
+
+    - name: Display final file status
+      ansible.builtin.debug:
+        msg: "Final file check: Size = {{ final_file_check.stat.size | default(0) }} bytes ({{ (final_file_check.stat.size | default(0) / 1048576) | round(2) }} MB). Required: > 100 MB"
+      when: mssql_service_check.stdout == ""
+
+    - name: Fail if file is still too small after re-download attempt
+      ansible.builtin.fail:
+        msg: "SQL Server installer file is too small ({{ final_file_check.stat.size | default(0) }} bytes). Download may have failed. Please download manually from https://www.microsoft.com/en-us/sql-server/sql-server-downloads and place at C:\\SQLServer\\SQLEXPR_x64_ENU.exe"
+      when: 
+        - mssql_service_check.stdout == ""
+        - final_file_check.stat.exists | default(false)
+        - final_file_check.stat.size | default(0) < 104857600
+
+    - name: Check if setup.exe already exists
+      ansible.windows.win_stat:
+        path: "{{ mssql_setup_iso_path }}\\setup.exe"
+      register: setup_exe_exists
+      when: mssql_service_check.stdout == ""
+
+    - name: Extract SQL Server setup files
+      ansible.windows.win_shell:
+        cmd: |
+          $installerPath = "C:\\SQLServer\\SQLEXPR_x64_ENU.exe"
+          $extractPath = "{{ mssql_setup_iso_path }}"
+          
+          # Verify file exists and is valid
+          if (-not (Test-Path $installerPath)) {
+              Write-Error "Installer file not found: $installerPath"
+              exit 1
+          }
+          
+          $fileInfo = Get-Item $installerPath
+          Write-Output "File size: $($fileInfo.Length) bytes"
+          
+          # SQL Server Express installer should be at least 100MB
+          if ($fileInfo.Length -lt 104857600) {
+              Write-Error "Installer file is too small (size: $($fileInfo.Length) bytes, expected: > 100MB). File may be corrupted or download incomplete."
+              Write-Error "Please download SQL Server Express manually from: https://www.microsoft.com/en-us/sql-server/sql-server-downloads"
+              exit 1
+          }
+          
+          # Extract using the installer's built-in extraction
+          Write-Output "Extracting SQL Server setup files to: $extractPath"
+          $process = Start-Process -FilePath $installerPath -ArgumentList "/Q", "/x:$extractPath", "/q" -Wait -NoNewWindow -PassThru
+          
+          if ($process.ExitCode -ne 0) {
+              Write-Error "Extraction failed with exit code: $($process.ExitCode)"
+              exit $process.ExitCode
+          }
+          
+          # Verify extraction was successful
+          $setupExe = Join-Path $extractPath "setup.exe"
+          if (-not (Test-Path $setupExe)) {
+              Write-Error "Extraction may have failed - setup.exe not found in: $extractPath"
+              exit 1
+          }
+          
+          Write-Output "Extraction completed successfully. Setup.exe found at: $setupExe"
+      when: 
+        - mssql_service_check.stdout == ""
+        - not setup_exe_exists.stat.exists | default(false)
+        - final_file_check.stat.exists | default(false)
+        - final_file_check.stat.size | default(0) >= 104857600
+      register: extract_result
+      failed_when: extract_result.rc != 0
+
+    - name: Skip extraction if setup.exe already exists
+      ansible.builtin.debug:
+        msg: "Setup.exe already exists at {{ mssql_setup_iso_path }}\\setup.exe. Skipping extraction."
+      when:
+        - mssql_service_check.stdout == ""
+        - setup_exe_exists.stat.exists | default(false)
+
+    - name: Prepare unattended installation configuration file
+      ansible.windows.win_template:
+        src: mssql_config.ini.j2
+        dest: "{{ mssql_setup_iso_path }}\\ConfigurationFile.ini"
+      when: mssql_service_check.stdout == ""
+
+    - name: Install SQL Server using configuration file
+      ansible.windows.win_shell: |
+        $setupPath = "{{ mssql_setup_iso_path }}\\setup.exe"
+        $configFile = "{{ mssql_setup_iso_path }}\\ConfigurationFile.ini"
+        $saPassword = ConvertTo-SecureString -String "{{ mssql_sa_password }}" -AsPlainText -Force
+        
+        Write-Output "Starting SQL Server installation..."
+        Write-Output "Setup path: $setupPath"
+        Write-Output "Config file: $configFile"
+        
+        # Verify setup.exe exists
+        if (-not (Test-Path $setupPath)) {
+            Write-Error "Setup.exe not found at: $setupPath"
+            exit 1
+        }
+        
+        # Run setup with configuration file
+        $process = Start-Process -FilePath $setupPath -ArgumentList "/ConfigurationFile=$configFile", "/SAPWD={{ mssql_sa_password }}", "/IACCEPTSQLSERVERLICENSETERMS", "/Q" -Wait -NoNewWindow -PassThru
+        
+        Write-Output "Installation process completed with exit code: $($process.ExitCode)"
+        
+        if ($process.ExitCode -ne 0) {
+            Write-Error "SQL Server installation failed with exit code: $($process.ExitCode)"
+            exit $process.ExitCode
+        }
+        
+        # Wait a bit for services to register
+        Start-Sleep -Seconds 10
+        
+        # Check if service was created
+        $serviceName = "MSSQL${{ mssql_instance_name }}"
+        $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+        if ($service) {
+            Write-Output "SQL Server service created successfully: $($service.Name)"
+        } else {
+            Write-Output "Warning: SQL Server service not found yet. Installation may still be in progress."
+        }
+      args:
+        creates: "C:\\Program Files\\Microsoft SQL Server\\MSSQL16.{{ mssql_instance_name }}\\MSSQL\\Binn\\sqlservr.exe"
+      when: mssql_service_check.stdout == ""
+      register: mssql_install
+      async: 1800
+      poll: 10
+      failed_when: mssql_install.rc != 0
+
+    - name: Check if SQL Server service exists
+      ansible.windows.win_shell: |
+        $serviceName = "MSSQL${{ mssql_instance_name }}"
+        $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+        if ($service) {
+            Write-Output "Service exists: $($service.Status)"
+            exit 0
+        } else {
+            Write-Output "Service does not exist"
+            exit 1
+        }
+      register: service_exists_check
+      when: mssql_service_check.stdout == ""
+      changed_when: false
+      failed_when: false
+
+    - name: Wait for SQL Server service to start
+      ansible.windows.win_service:
+        name: "MSSQL${{ mssql_instance_name }}"
+        state: started
+      when: 
+        - mssql_service_check.stdout == ""
+        - service_exists_check.rc == 0
+      register: service_start
+      retries: 30
+      delay: 10
+      until: service_start is succeeded
+
+    - name: Enable SQL Server TCP/IP protocol
+      ansible.windows.win_shell: |
+        Import-Module SqlServer -ErrorAction SilentlyContinue
+        $instanceName = "{{ mssql_instance_name }}"
+        
+        # Enable TCP/IP protocol
+        $tcp = Get-Item "HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL*\\MSSQLServer\\SuperSocketNetLib\\Tcp" -ErrorAction SilentlyContinue
+        if ($tcp) {
+            Set-ItemProperty -Path $tcp.PSPath -Name "Enabled" -Value 1
+            Write-Output "TCP/IP protocol enabled"
+        } else {
+            Write-Output "TCP/IP registry key not found"
+        }
+        
+        # Configure TCP port
+        $tcpIpAll = Get-Item "HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL*\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IPAll" -ErrorAction SilentlyContinue
+        if ($tcpIpAll) {
+            Set-ItemProperty -Path $tcpIpAll.PSPath -Name "TcpPort" -Value "{{ mssql_port }}"
+            Set-ItemProperty -Path $tcpIpAll.PSPath -Name "TcpDynamicPorts" -Value ""
+            Write-Output "TCP port configured to {{ mssql_port }}"
+        } else {
+            Write-Output "TCP/IP IPAll registry key not found"
+        }
+      when:
+        - mssql_service_check.stdout == ""
+        - service_exists_check.rc == 0
+      register: tcp_config
+      changed_when: tcp_config.rc == 0
+      failed_when: false
+
+    - name: Restart SQL Server service
+      ansible.windows.win_service:
+        name: "MSSQL${{ mssql_instance_name }}"
+        state: restarted
+      when: 
+        - tcp_config is changed
+        - service_exists_check.rc == 0
+
+    - name: Configure Windows Firewall for SQL Server
+      community.windows.win_firewall_rule:
+        name: "SQL Server {{ mssql_port }}"
+        direction: in
+        action: allow
+        protocol: tcp
+        localport: "{{ mssql_port }}"
+        state: present
+        enabled: yes
+
+    - name: Verify SQL Server installation
+      ansible.windows.win_shell: |
+        $instanceName = "{{ mssql_instance_name }}"
+        $service = Get-Service -Name "MSSQL$instanceName" -ErrorAction SilentlyContinue
+        if ($service) {
+            Write-Output "SQL Server service: $($service.Status)"
+            Write-Output "SQL Server version: $((Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL*\\MSSQLServer').CurrentVersion)"
+        } else {
+            Write-Output "SQL Server service not found"
+        }
+      register: mssql_verify
+
+    - name: Display SQL Server status
+      ansible.builtin.debug:
+        var: mssql_verify.stdout_lines
+
